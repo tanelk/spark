@@ -919,13 +919,32 @@ object InferFiltersFromConstraints extends Rule[LogicalPlan]
 
   def apply(plan: LogicalPlan): LogicalPlan = {
     if (SQLConf.get.constraintPropagationEnabled) {
-      inferFilters(plan)
+      plan transformDown applyLocally
     } else {
       plan
     }
   }
 
-  private def inferFilters(plan: LogicalPlan): LogicalPlan = plan transform {
+  private val applyLocally: PartialFunction[LogicalPlan, LogicalPlan] = {
+    val push = PushDownPredicates.applyLocally
+    new PartialFunction[LogicalPlan, LogicalPlan] {
+      // Combine and then push OR just push
+      def apply(x: LogicalPlan): LogicalPlan = {
+        var plan = x
+        var inferred = x
+        do {
+          inferred = inferFilters.applyOrElse(plan, identity[LogicalPlan])
+          plan = push.applyOrElse(inferred, identity[LogicalPlan])
+        } while (!plan.fastEquals(inferred))
+        plan
+      }
+      def isDefinedAt(x: LogicalPlan): Boolean = {
+        inferFilters.isDefinedAt(x) || push.isDefinedAt(x)
+      }
+    }
+  }
+
+  private val inferFilters: PartialFunction[LogicalPlan, LogicalPlan] = {
     case filter @ Filter(condition, child) =>
       val newFilters = filter.constraints --
         (child.constraints ++ splitConjunctivePredicates(condition))
@@ -1151,10 +1170,26 @@ object PruneFilters extends Rule[LogicalPlan] with PredicateHelper {
  *  Filter-Join-Join-Join. Most predicates can be pushed down in a single pass.
  */
 object PushDownPredicates extends Rule[LogicalPlan] with PredicateHelper {
-  def apply(plan: LogicalPlan): LogicalPlan = plan transform {
-    CombineFilters.applyLocally
-      .orElse(PushPredicateThroughNonJoin.applyLocally)
+  def apply(plan: LogicalPlan): LogicalPlan = plan transformDown applyLocally
+
+  val applyLocally: PartialFunction[LogicalPlan, LogicalPlan] = {
+    val combine = CombineFilters.applyLocally
+    val push = PushPredicateThroughNonJoin.applyLocally
       .orElse(PushPredicateThroughJoin.applyLocally)
+
+    new PartialFunction[LogicalPlan, LogicalPlan] {
+      // Combine and then push OR just push
+      def apply(x: LogicalPlan): LogicalPlan = {
+        if (combine.isDefinedAt(x)) {
+          push.applyOrElse(combine.apply(x), identity[LogicalPlan])
+        } else {
+          push.apply(x)
+        }
+      }
+      def isDefinedAt(x: LogicalPlan): Boolean = {
+        combine.isDefinedAt(x) || push.isDefinedAt(x)
+      }
+    }
   }
 }
 

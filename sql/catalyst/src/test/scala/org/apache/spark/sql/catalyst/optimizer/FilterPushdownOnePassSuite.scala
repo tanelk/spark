@@ -180,4 +180,23 @@ class FilterPushdownOnePassSuite extends PlanTest {
 
     comparePlans(optimized, correctAnswer)
   }
+
+  test("SPARK-30876: combine and push on the same iteration") {
+    val x = testRelation1.subquery('x)
+
+    val originalQuery = x
+      .select('a)
+      .where('a > 0)
+      .where('a < 10)
+      .analyze
+
+    val optimized = Optimize.execute(originalQuery)
+
+    val correctAnswer = x
+      .where('a > 0 && 'a < 10)
+      .select('a)
+      .analyze
+
+    comparePlans(optimized, correctAnswer)
+  }
 }

@@ -29,15 +29,22 @@ import org.apache.spark.sql.types.{IntegerType, LongType}
 class InferFiltersFromConstraintsSuite extends PlanTest {
 
   object Optimize extends RuleExecutor[LogicalPlan] {
-    val batches =
-      Batch("InferAndPushDownFilters", FixedPoint(100),
-        PushPredicateThroughJoin,
-        PushPredicateThroughNonJoin,
-        InferFiltersFromConstraints,
-        CombineFilters,
-        SimplifyBinaryComparison,
-        BooleanSimplification,
-        PruneFilters) :: Nil
+    val operatorOptimizationRuleSet = Seq(
+      PushDownPredicates,
+      ColumnPruning,
+      BooleanSimplification,
+      SimplifyBinaryComparison,
+      PruneFilters)
+
+    val batches = Batch(
+      "Operator Optimization before Inferring Filters",
+      FixedPoint(100),
+      operatorOptimizationRuleSet: _*) ::
+      Batch("Infer Filters", Once, InferFiltersFromConstraints) ::
+      Batch(
+        "Operator Optimization after Inferring Filters",
+        FixedPoint(100),
+        operatorOptimizationRuleSet: _*) :: Nil
   }
 
   val testRelation = LocalRelation('a.int, 'b.int, 'c.int)
@@ -211,7 +218,8 @@ class InferFiltersFromConstraintsSuite extends PlanTest {
   test("SPARK-23405: left-semi equal-join should filter out null join keys on both sides") {
     val x = testRelation.subquery('x)
     val y = testRelation.subquery('y)
-    testConstraintsAfterJoin(x, y, x.where(IsNotNull('a)), y.where(IsNotNull('a)), LeftSemi)
+    testConstraintsAfterJoin(x, y,
+      x.where(IsNotNull('a)), y.where(IsNotNull('a)).select('a), LeftSemi)
   }
 
   test("SPARK-21479: Outer join after-join filters push down to null-supplying side") {
@@ -250,7 +258,7 @@ class InferFiltersFromConstraintsSuite extends PlanTest {
   test("SPARK-23564: left anti join should filter out null join keys on right side") {
     val x = testRelation.subquery('x)
     val y = testRelation.subquery('y)
-    testConstraintsAfterJoin(x, y, x, y.where(IsNotNull('a)), LeftAnti)
+    testConstraintsAfterJoin(x, y, x, y.where(IsNotNull('a)).select('a), LeftAnti)
   }
 
   test("SPARK-23564: left outer join should filter out null join keys on right side") {
@@ -315,5 +323,24 @@ class InferFiltersFromConstraintsSuite extends PlanTest {
         Inner,
         condition)
     }
+  }
+
+  test("SPARK-30876: optimize constraints in 3-way join") {
+    val x = testRelation.subquery('x)
+    val y = testRelation.subquery('y)
+    val z = testRelation.subquery('z)
+    val originalQuery = x.join(y).join(z)
+      .where(("x.a".attr === "y.b".attr) && ("y.b".attr === "z.c".attr) && ("z.c".attr === 1))
+      .groupBy()(count(Literal("*"))).analyze
+    val optimized = Optimize.execute(originalQuery)
+    val correctAnswer = x.where('a === 1 && IsNotNull('a)).select('a)
+      .join(y.where('b === 1 && IsNotNull('b))
+        .select('b), Inner, Some("x.a".attr === "y.b".attr))
+      .select('b)
+      .join(z.where('c === 1 && IsNotNull('c))
+        .select('c), Inner, Some('b === "z.c".attr))
+      .select()
+      .groupBy()(count(Literal("*"))).analyze
+    comparePlans(optimized, correctAnswer)
   }
 }
