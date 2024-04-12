@@ -103,7 +103,7 @@ class QuantileSummaries(
         sampleIdx += 1
       }
 
-      // If it is the first one to insert, of if it is the last one
+      // If it is the first one to insert, or if it is the last one
       currentCount += 1
       val delta =
         if (newSamples.isEmpty || (sampleIdx == sampled.length && opsIdx == sorted.length - 1)) {

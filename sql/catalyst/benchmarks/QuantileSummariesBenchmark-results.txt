@@ -1,0 +1,14 @@
+================================================================================================
+QuantileSummaries
+================================================================================================
+
+OpenJDK 64-Bit Server VM 17.0.10+7 on Linux 6.8.4-arch1-1
+Intel(R) Core(TM) i7-10700 CPU @ 2.90GHz
+QuantileSummaries:                        Best Time(ms)   Avg Time(ms)   Stdev(ms)    Rate(M/s)   Per Row(ns)   Relative
+------------------------------------------------------------------------------------------------------------------------
+Only insert                                         168            171           8          6.0         167.6       1.0X
+Insert & merge                                     6690           6792         143          0.1        6690.3       0.0X
+KllFloatsSketch insert                               44             47           6         22.5          44.4       3.8X
+KllFloatsSketch Insert & merge                       55             57           6         18.3          54.7       3.1X
+
+
